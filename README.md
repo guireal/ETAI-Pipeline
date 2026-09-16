@@ -1,4 +1,16 @@
 # Baseline Predictive Pipeline -- ETAI
+20260491 - GUILHERME REAL
+
+LR - Train accuracy: 0.679
+Test accuracy:  0.677
+Gap (train - test): +0.001
+
+DT - Train accuracy: 0.705
+Test accuracy:  0.656
+Gap (train - test): +0.050
+
+Current best model: Logistic Regression is the best because it has zero overfitting (a train-test gap of +0.001 vs. +0.050) and a higher overall accuracy of 68%.
+
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
@@ -111,3 +123,69 @@ You're free to improve on this structure or restructure it entirely -- what matt
 ## Dataset
 
 See `data/README.md`.
+
+
+
+STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT
+
+Increase the number of iterations to improve the convergence (max_iter=1000).
+You might also want to scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+  n_iter_i = _check_optimize_result(
+Train accuracy: 0.679
+Test accuracy:  0.677
+Gap (train - test): +0.001
+
+Classification report (test set):
+              precision    recall  f1-score   support
+
+           0       0.69      0.74      0.71       684
+           1       0.66      0.60      0.63       568
+
+    accuracy                           0.68      1252
+   macro avg       0.67      0.67      0.67      1252
+weighted avg       0.68      0.68      0.68      1252
+
+False positive rate by race
+(share of people who did NOT reoffend, but were predicted to)
+
+  Our model:
+     African-American    FPR = 0.50  (n=6)
+     Caucasian           FPR = 0.00  (n=1)
+    -                    FPR = 0.20  (n=5)
+    ?                    FPR = 0.33  (n=3)
+    AFRICAN-AMERICAN     FPR = 0.00  (n=4)
+    African American     FPR = 0.33  (n=3)
+    African-American     FPR = 0.33  (n=303)
+    Asian                FPR = 0.33  (n=3)
+    CAUCASIAN            FPR = 0.25  (n=4)
+    Caucasian            FPR = 0.24  (n=232)
+    Hispanic             FPR = 0.10  (n=61)
+    Native American      FPR = 0.00  (n=2)
+    Other                FPR = 0.15  (n=41)
+    african-american     FPR = 0.10  (n=10)
+    caucasian            FPR = 0.33  (n=3)
+    hispanic             FPR = 0.33  (n=3)
+
+  COMPAS's own score:
+     African-American    FPR = 0.50  (n=6)
+     Caucasian           FPR = 0.00  (n=1)
+    -                    FPR = 0.20  (n=5)
+    ?                    FPR = 0.00  (n=3)
+    AFRICAN-AMERICAN     FPR = 0.25  (n=4)
+    African American     FPR = 0.33  (n=3)
+    African-American     FPR = 0.44  (n=303)
+    Asian                FPR = 0.00  (n=3)
+    CAUCASIAN            FPR = 0.25  (n=4)
+    Caucasian            FPR = 0.25  (n=232)
+    Hispanic             FPR = 0.15  (n=61)
+    Native American      FPR = 0.50  (n=2)
+    Other                FPR = 0.20  (n=41)
+    african-american     FPR = 0.50  (n=10)
+    caucasian            FPR = 0.00  (n=3)
+    hispanic             FPR = 0.33  (n=3)
+
+Full results saved to results\run_20260916_090752.txt
+
