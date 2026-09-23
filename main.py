@@ -1,17 +1,6 @@
-"""
-Entry point for the baseline predictive pipeline.
-
-Run with:
-    python main.py
-
-This orchestrates the full (deliberately simple) pipeline:
-    load config -> load data -> preprocess -> split -> train
-    -> evaluate (train & test) -> save results
-"""
 import yaml
-
 from src.data import load_data
-from src.preprocessing import preprocess
+from src.preprocessing import clean_dataset, preprocess
 from src.model import build_model
 from src.evaluate import evaluate, fairness_report
 from src.results import save_run
@@ -26,6 +15,7 @@ def main():
     config = load_config()
 
     df = load_data(config["data"]["path"])
+    df = clean_dataset(df)
 
     X_train, X_test, y_train, y_test, extras_test = preprocess(
         df,
@@ -39,7 +29,6 @@ def main():
     model = build_model(config["model"])
     model.fit(X_train, y_train)
 
-    # predict on both splits -- train accuracy vs. test accuracy is how we'll spot overfitting, not just how "good" the model looks
     y_train_pred = model.predict(X_train)
     y_test_pred = model.predict(X_test)
 
