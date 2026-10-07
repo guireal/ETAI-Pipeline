@@ -1,114 +1,122 @@
+"""Preprocessing and dataset splitting."""
 import pandas as pd
+import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-MNAR_INDICATOR_SOURCES = ["priors_count", "c_charge_degree"]
-NUMERIC_FEATURES = ["age", "juv_fel_count", "juv_misd_count", "juv_other_count", "priors_count"]
-CATEGORICAL_FEATURES = ["sex", "age_cat", "c_charge_degree"]
-
-CANONICAL_MAPS = {
-    "sex": {"male": "Male", "female": "Female"},
-    "race": {
-        "african-american": "African-American",
-        "african american": "African-American",
-        "caucasian": "Caucasian",
-        "hispanic": "Hispanic",
-        "other": "Other",
-        "asian": "Asian",
-        "native american": "Native American",
-    },
-    "c_charge_degree": {"f": "F", "felony": "F", "m": "M", "misdemeanor": "M"},
-    "score_text": {"low": "Low", "medium": "Medium", "high": "High"},
-}
-
-PLACEHOLDER_TOKENS = {"-", "?", "n/a", "N/A", "na", "NA", ""}
+from sklearn.preprocessing import StandardScaler, RobustScaler, OneHotEncoder, TargetEncoder
 
 
-def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
-    """Standardizes categories, handles domain rule NaNs, and drops duplicates/redundant columns."""
+def clean_dataset(df: pd.DataFrame, diagnostics_config: dict) -> pd.DataFrame:
+    """Standardizes categories, handles domain rule NaNs, and drops redundant columns."""
     out = df.copy()
+    tokens = set(diagnostics_config.get("placeholder_tokens", []))
+    numeric_text_cols = diagnostics_config.get("numeric_text_columns", [])
+    validity_rules = diagnostics_config.get("validity_rules", {})
+    canonical_maps = diagnostics_config.get("canonical_categories", {})
+    redundant_cols = diagnostics_config.get("redundant_columns", [])
 
-    # 1. Clean strings & placeholders
-    for col in ["priors_count", "prior_offenses"]:
+    for col in numeric_text_cols:
         if col in out.columns:
-            out[col] = pd.to_numeric(out[col].replace(list(PLACEHOLDER_TOKENS), None), errors="coerce")
+            out[col] = pd.to_numeric(out[col].replace(list(tokens), np.nan), errors="coerce")
 
-    for col, mapping in CANONICAL_MAPS.items():
+    for col, mapping in canonical_maps.items():
         if col in out.columns:
             cleaned = out[col].astype(str).str.strip().str.lower()
             out[col] = cleaned.map(mapping).fillna(out[col])
-            out.loc[out[col].astype(str).str.strip().isin(PLACEHOLDER_TOKENS), col] = None
+            out.loc[out[col].astype(str).str.strip().isin(tokens), col] = np.nan
 
-    # 2. Domain rules: replace impossible values with NaN
-    if "age" in out.columns:
-        out.loc[~pd.to_numeric(out["age"], errors="coerce").between(18, 100), "age"] = None
-    if "decile_score" in out.columns:
-        out.loc[~pd.to_numeric(out["decile_score"], errors="coerce").between(1, 10), "decile_score"] = None
-    if "juv_fel_count" in out.columns:
-        out.loc[pd.to_numeric(out["juv_fel_count"], errors="coerce") < 0, "juv_fel_count"] = None
-    if "priors_count" in out.columns:
-        out.loc[~pd.to_numeric(out["priors_count"], errors="coerce").between(0, 60), "priors_count"] = None
+    for col, rule in validity_rules.items():
+        if col in out.columns:
+            col_series = pd.to_numeric(out[col], errors="coerce")
+            if "min" in rule and "max" in rule:
+                out.loc[~col_series.between(rule["min"], rule["max"]), col] = np.nan
+            elif "min" in rule:
+                out.loc[col_series < rule["min"], col] = np.nan
+            elif "max" in rule:
+                out.loc[col_series > rule["max"], col] = np.nan
 
-    # 3. Deduplicate
-    out = out.drop_duplicates()
-    if "id" in out.columns:
-        out = out.drop_duplicates(subset="id", keep="first")
-
-    # 4. Drop multicollinear columns
-    cols_to_drop = [c for c in ["prior_offenses", "age_in_months", "juvenile_total"] if c in out.columns]
+    cols_to_drop = [c for c in redundant_cols if c in out.columns]
     out = out.drop(columns=cols_to_drop)
 
     return out
 
 
-def build_preprocessor() -> ColumnTransformer:
-    """Builds a scikit-learn preprocessor with imputation and one-hot encoding."""
+def drop_duplicate_rows(df: pd.DataFrame, id_col: str = "id") -> pd.DataFrame:
+    """Removes duplicate rows prior to splitting."""
+    out = df.drop_duplicates()
+    if id_col in out.columns:
+        out = out.drop_duplicates(subset=id_col, keep="first")
+    return out
+
+
+def build_preprocessor(prep_config: dict) -> ColumnTransformer:
+    """Builds a scikit-learn ColumnTransformer from config settings."""
+    encoder_type = prep_config.get("encoder", "target")
+    scaler_type = prep_config.get("scaler", "robust")
+    num_strat = prep_config.get("imputation", {}).get("numeric_strategy", "median")
+    cat_strat = prep_config.get("imputation", {}).get("categorical_strategy", "most_frequent")
+
+    numeric_features = prep_config.get("numeric_features", [])
+    categorical_features = prep_config.get("categorical_features", [])
+    mnar_sources = prep_config.get("mnar_indicator_sources", [])
+
+    if scaler_type == "robust":
+        scaler = RobustScaler()
+    elif scaler_type == "standard":
+        scaler = StandardScaler()
+    else:
+        scaler = "passthrough"
+
     numeric_pipeline = Pipeline([
-        ("impute", SimpleImputer(strategy="median")),
-        ("scale", StandardScaler()),
-    ])
-    categorical_pipeline = Pipeline([
-        ("impute", SimpleImputer(strategy="most_frequent")),
-        ("encode", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ("impute", SimpleImputer(strategy=num_strat)),
+        ("scale", scaler),
     ])
 
-    numeric_indicators = [f"{c}_was_missing" for c in MNAR_INDICATOR_SOURCES]
+    if encoder_type == "target":
+        encoder = TargetEncoder(cv=5, smooth="auto")
+    else:
+        encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+
+    categorical_pipeline = Pipeline([
+        ("impute", SimpleImputer(strategy=cat_strat)),
+        ("encode", encoder),
+    ])
+
+    numeric_indicators = [f"{c}_was_missing" for c in mnar_sources]
 
     return ColumnTransformer([
-        ("numeric", numeric_pipeline, NUMERIC_FEATURES),
-        ("categorical", categorical_pipeline, CATEGORICAL_FEATURES),
+        ("numeric", numeric_pipeline, numeric_features),
+        ("categorical", categorical_pipeline, categorical_features),
         ("indicators", "passthrough", numeric_indicators),
     ])
 
 
-def preprocess(
+def split_dev_test(
     df: pd.DataFrame,
     target: str,
     sensitive_attr: str,
     drop_columns: list,
-    test_size: float,
-    random_state: int,
+    mnar_sources: list,
+    test_size: float = 0.20,
+    random_state: int = 42,
 ):
-    # Add MNAR indicators
-    for col in MNAR_INDICATOR_SOURCES:
-        if col in df.columns:
-            df[f"{col}_was_missing"] = df[col].isna().astype(int)
+    """Partitions the dataset into development and final test sets."""
+    df_proc = df.copy()
 
-    y = df[target]
-    extras = df[[sensitive_attr, "score_text"]].copy()
+    for col in mnar_sources:
+        if col in df_proc.columns:
+            df_proc[f"{col}_was_missing"] = df_proc[col].isna().astype(int)
 
-    drop_always = [target, sensitive_attr] + [c for c in drop_columns if c in df.columns]
-    X = df.drop(columns=drop_always)
+    y = df_proc[target]
+    extras = df_proc[[sensitive_attr, "score_text"]].copy()
 
-    X_train, X_test, y_train, y_test, extras_train, extras_test = train_test_split(
+    drop_always = [target, sensitive_attr] + [c for c in drop_columns if c in df_proc.columns]
+    X = df_proc.drop(columns=drop_always)
+
+    X_dev, X_test, y_dev, y_test, extras_dev, extras_test = train_test_split(
         X, y, extras, test_size=test_size, random_state=random_state, stratify=y
     )
 
-    preprocessor = build_preprocessor()
-    X_train_proc = preprocessor.fit_transform(X_train)
-    X_test_proc = preprocessor.transform(X_test)
-
-    return X_train_proc, X_test_proc, y_train, y_test, extras_test
+    return X_dev, y_dev, extras_dev, X_test, y_test, extras_test

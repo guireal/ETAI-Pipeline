@@ -11,6 +11,45 @@ Gap (train - test): +0.050
 
 Current best model: Logistic Regression is the best because it has zero overfitting (a train-test gap of +0.001 vs. +0.050) and a higher overall accuracy of 68%.
 
+Cross-Validation Results (Development Set)
+Fold   Train Acc   Val Acc     Gap (Train - Val) 
+------------------------------------------------
+1      0.675       0.680       -0.004            
+2      0.681       0.654       +0.027            
+3      0.675       0.679       -0.003            
+4      0.671       0.691       -0.020            
+5      0.675       0.667       +0.008            
+------------------------------------------------
+Mean: 0.675 +/- 0.003 (train)   0.674 +/- 0.012 (val)   Gap: +0.001
+
+Classification report (test set):
+              precision    recall  f1-score   support
+
+           0       0.67      0.81      0.73      3170
+           1       0.69      0.51      0.59      2601
+
+    accuracy                           0.67      5771
+   macro avg       0.68      0.66      0.66      5771
+weighted avg       0.68      0.67      0.67      5771
+
+False positive rate by race
+(share of people who did NOT reoffend, but were predicted to)
+
+  Our model:
+    African-American     FPR = 0.26  (n=1420)
+    Asian                FPR = 0.10  (n=21)
+    Caucasian            FPR = 0.13  (n=1161)
+    Hispanic             FPR = 0.15  (n=311)
+    Native American      FPR = 0.00  (n=6)
+    Other                FPR = 0.14  (n=185)
+
+  COMPAS's own score:
+    African-American     FPR = 0.45  (n=1420)
+    Asian                FPR = 0.10  (n=21)
+    Caucasian            FPR = 0.23  (n=1161)
+    Hispanic             FPR = 0.23  (n=311)
+    Native American      FPR = 0.17  (n=6)
+    Other                FPR = 0.14  (n=185)
 
 This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
 
@@ -188,4 +227,5 @@ False positive rate by race
     hispanic             FPR = 0.33  (n=3)
 
 Full results saved to results\run_20260916_090752.txt
+
 
