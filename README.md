@@ -229,3 +229,5 @@ False positive rate by race
 Full results saved to results\run_20260916_090752.txt
 
 
+| 5 | Hyperparameter tuning without leakage | Added Optuna hyperparameter tuning and nested cross-validation in `src/tuning.py`. The complete preprocessing and model pipeline is used during tuning to avoid data leakage. The test set remains separate from model selection. |
+| 6 | Ensembles: Random Forest, Oblique Random Forest and AdaBoost | Added Oblique Random Forest and AdaBoost to `src/model.py`, alongside the existing models. Added hyperparameter search spaces in `config.yaml` and a corrected paired t-test function for comparing model scores obtained from the same cross-validation folds. |

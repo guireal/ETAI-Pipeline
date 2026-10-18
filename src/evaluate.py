@@ -1,92 +1,170 @@
-"""Evaluation -- stratified k-fold cross-validation, out-of-fold metrics, and fairness audit."""
+"""Cross-validation, classification and fairness evaluation."""
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold
-from sklearn.base import clone
-from sklearn.metrics import accuracy_score, classification_report
+from scipy import stats
+from sklearn.metrics import classification_report
+from sklearn.model_selection import cross_validate
 
 
-def cross_validate_pipeline(pipeline, X_dev, y_dev, n_splits: int = 5, random_state: int = 42):
-    """Performs stratified cross-validation on the development set."""
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-
-    train_accs, val_accs, gaps = [], [], []
-    oof_preds = pd.Series(index=X_dev.index, dtype=int)
-
-    lines = [
-        "Cross-Validation Results (Development Set)",
-        f"{'Fold':<6}{'Train Acc':<12}{'Val Acc':<12}{'Gap (Train - Val)':<18}",
-        "-" * 48,
-    ]
-
-    for fold, (train_idx, val_idx) in enumerate(skf.split(X_dev, y_dev), start=1):
-        fold_pipeline = clone(pipeline)
-
-        X_tr, y_tr = X_dev.iloc[train_idx], y_dev.iloc[train_idx]
-        X_va, y_va = X_dev.iloc[val_idx], y_dev.iloc[val_idx]
-
-        fold_pipeline.fit(X_tr, y_tr)
-
-        train_pred = fold_pipeline.predict(X_tr)
-        val_pred = fold_pipeline.predict(X_va)
-
-        oof_preds.iloc[val_idx] = val_pred
-
-        tr_acc = accuracy_score(y_tr, train_pred)
-        va_acc = accuracy_score(y_va, val_pred)
-        gap = tr_acc - va_acc
-
-        train_accs.append(tr_acc)
-        val_accs.append(va_acc)
-        gaps.append(gap)
-
-        lines.append(f"{fold:<6}{tr_acc:<12.3f}{va_acc:<12.3f}{gap:<+18.3f}")
-
-    lines.append("-" * 48)
-    lines.append(
-        f"Mean: {np.mean(train_accs):.3f} +/- {np.std(train_accs):.3f} (train)   "
-        f"{np.mean(val_accs):.3f} +/- {np.std(val_accs):.3f} (val)   "
-        f"Gap: {np.mean(gaps):+.3f}"
+def cross_validate_pipeline(
+    pipeline, X, y, cv, scoring="accuracy", n_jobs=1
+):
+    """Evaluate a pipeline and return fold scores and OOF predictions."""
+    scores = cross_validate(
+        pipeline,
+        X,
+        y,
+        cv=cv,
+        scoring=scoring,
+        return_train_score=True,
+        return_estimator=True,
+        return_indices=True,
+        n_jobs=n_jobs
     )
-    lines.append("")
 
-    report_text = "\n".join(lines)
-    print(report_text)
-    return oof_preds, report_text
+    fold_scores = pd.DataFrame({
+        "fold": range(1, len(scores["test_score"]) + 1),
+        "train": scores["train_score"],
+        "validation": scores["test_score"]
+    })
+
+    fold_scores["gap"] = (
+        fold_scores["train"] - fold_scores["validation"]
+    )
+
+    y_oof = np.empty(len(X), dtype=np.asarray(y).dtype)
+
+    for model, val_idx in zip(
+        scores["estimator"],
+        scores["indices"]["test"]
+    ):
+        y_oof[val_idx] = model.predict(X.iloc[val_idx])
+
+    return fold_scores, y_oof
 
 
-def evaluate_oof(y_dev, oof_preds) -> str:
-    """Generates classification metrics using out-of-fold predictions."""
+def cv_report(fold_scores, scoring="accuracy"):
+    """Display the cross-validation results."""
     lines = [
-        "Classification report (test set):",
-        classification_report(y_dev, oof_preds),
+        f"Cross-validation ({len(fold_scores)} folds, metric: {scoring})",
+        "",
+        fold_scores.to_string(
+            index=False,
+            float_format=lambda value: f"{value:.3f}"
+        ),
+        ""
     ]
+
+    for column in ["train", "validation", "gap"]:
+        lines.append(
+            f"{column.capitalize()} mean = "
+            f"{fold_scores[column].mean():.3f}; "
+            f"std = {fold_scores[column].std(ddof=1):.3f}"
+        )
+
     text = "\n".join(lines)
     print(text)
     return text
 
 
-def fairness_report_oof(y_dev, oof_preds, extras_dev: pd.DataFrame, sensitive_attr: str = "race") -> str:
-    """Computes false positive rates by group using out-of-fold predictions."""
-    df = extras_dev.copy()
-    df["y_true"] = y_dev.values
-    df["y_pred_model"] = oof_preds.values
-    df["y_pred_compas"] = (df["score_text"] != "Low").astype(int)
+def corrected_paired_test(scores_a, scores_b, test_train_ratio):
+    """Corrected paired t-test for scores from the same CV folds."""
+    differences = (
+        np.asarray(scores_a, dtype=float)
+        - np.asarray(scores_b, dtype=float)
+    )
+
+    if len(differences) < 2:
+        raise ValueError(
+            "At least two paired fold scores are required."
+        )
+
+    standard_error = np.sqrt(
+        (1 / len(differences) + test_train_ratio)
+        * differences.var(ddof=1)
+    )
+
+    if standard_error > 0:
+        t_value = float(differences.mean() / standard_error)
+    else:
+        t_value = 0.0
+
+    p_value = float(
+        2 * stats.t.sf(
+            abs(t_value),
+            df=len(differences) - 1
+        )
+    )
+
+    return {
+        "mean_diff": float(differences.mean()),
+        "wins": (
+            f"{int((differences > 0).sum())}/"
+            f"{len(differences)}"
+        ),
+        "t": t_value,
+        "p_value": p_value
+    }
+
+
+def oof_classification_report(y_true, y_pred):
+    """Classification report using out-of-fold predictions."""
+    text = (
+        "Classification report (out-of-fold predictions, "
+        "development set):\n"
+        + classification_report(
+            y_true,
+            y_pred,
+            zero_division=0
+        )
+    )
+
+    print(text)
+    return text
+
+
+def fairness_report(
+    y_true, y_pred, extras, sensitive_attr="race"
+):
+    """Compare false-positive rates by group."""
+    df = extras.copy()
+
+    df[sensitive_attr] = (
+        df[sensitive_attr].astype(object).fillna("unknown")
+    )
+    df["y_true"] = np.asarray(y_true)
+    df["y_pred_model"] = np.asarray(y_pred)
+    df["y_pred_compas"] = (
+        df["score_text"] != "Low"
+    ).astype(int)
 
     lines = [
-        "False positive rate by race",
-        "(share of people who did NOT reoffend, but were predicted to)",
-        "",
+        f"False positive rate by {sensitive_attr}",
+        "(development set, out-of-fold predictions)",
+        ""
     ]
 
-    for label, col in [("Our model", "y_pred_model"), ("COMPAS's own score", "y_pred_compas")]:
+    for label, column in [
+        ("Our model", "y_pred_model"),
+        ("COMPAS score", "y_pred_compas")
+    ]:
         lines.append(f"  {label}:")
-        for group, g in df.groupby(sensitive_attr):
-            negatives = g[g["y_true"] == 0]
+
+        for group, group_df in df.groupby(
+            sensitive_attr, dropna=False
+        ):
+            negatives = group_df[group_df["y_true"] == 0]
+
             if len(negatives) == 0:
                 continue
-            fpr = (negatives[col] == 1).mean()
-            lines.append(f"    {str(group):<20s} FPR = {fpr:.2f}  (n={len(negatives)})")
+
+            fpr = (negatives[column] == 1).mean()
+
+            lines.append(
+                f"    {str(group):<20s} FPR = {fpr:.2f} "
+                f"(n={len(negatives)})"
+            )
+
         lines.append("")
 
     text = "\n".join(lines)
