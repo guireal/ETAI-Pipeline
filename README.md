@@ -1,233 +1,97 @@
-# Baseline Predictive Pipeline -- ETAI
-20260491 - GUILHERME REAL
+﻿# ETAI Predictive Pipeline - Two-Year Recidivism
 
-LR - Train accuracy: 0.679
-Test accuracy:  0.677
-Gap (train - test): +0.001
+This project predicts two-year recidivism using ProPublica's COMPAS dataset.
 
-DT - Train accuracy: 0.705
-Test accuracy:  0.656
-Gap (train - test): +0.050
-
-Current best model: Logistic Regression is the best because it has zero overfitting (a train-test gap of +0.001 vs. +0.050) and a higher overall accuracy of 68%.
-
-Cross-Validation Results (Development Set)
-Fold   Train Acc   Val Acc     Gap (Train - Val) 
-------------------------------------------------
-1      0.675       0.680       -0.004            
-2      0.681       0.654       +0.027            
-3      0.675       0.679       -0.003            
-4      0.671       0.691       -0.020            
-5      0.675       0.667       +0.008            
-------------------------------------------------
-Mean: 0.675 +/- 0.003 (train)   0.674 +/- 0.012 (val)   Gap: +0.001
-
-Classification report (test set):
-              precision    recall  f1-score   support
-
-           0       0.67      0.81      0.73      3170
-           1       0.69      0.51      0.59      2601
-
-    accuracy                           0.67      5771
-   macro avg       0.68      0.66      0.66      5771
-weighted avg       0.68      0.67      0.67      5771
-
-False positive rate by race
-(share of people who did NOT reoffend, but were predicted to)
-
-  Our model:
-    African-American     FPR = 0.26  (n=1420)
-    Asian                FPR = 0.10  (n=21)
-    Caucasian            FPR = 0.13  (n=1161)
-    Hispanic             FPR = 0.15  (n=311)
-    Native American      FPR = 0.00  (n=6)
-    Other                FPR = 0.14  (n=185)
-
-  COMPAS's own score:
-    African-American     FPR = 0.45  (n=1420)
-    Asian                FPR = 0.10  (n=21)
-    Caucasian            FPR = 0.23  (n=1161)
-    Hispanic             FPR = 0.23  (n=311)
-    Native American      FPR = 0.17  (n=6)
-    Other                FPR = 0.14  (n=185)
-
-This is the **starting point** for your semester project: a small but *complete* predictive pipeline -- every piece a real project needs (entry point, config, data loading, preprocessing, model, evaluation), just kept as simple as possible for now.
-
-The task: predict two-year recidivism using ProPublica's COMPAS
-dataset -- the data behind a real 2016 investigation into a risk-
-assessment algorithm actually used by US courts to help inform bail and sentencing decisions. See `data/README.md` for the full problem description and a complete data dictionary before you start.
-
-It has some **deliberately weak spots**. Part of your work this
-semester is finding them and making them better -- see the pipeline progress table below, which tracks what changes and why as the weeks
-go on.
+The pipeline includes data cleaning, preprocessing, model construction, cross-validation, hyperparameter tuning, evaluation and fairness analysis.
 
 ## Project structure
 
-```
-.
-├── main.py                # entry point: run the whole pipeline
-├── config.yaml             # all tunable settings live here
-├── requirements.txt
-├── src/
-│   ├── data.py             # loading
-│   ├── preprocessing.py    # cleaning + train/test split
-│   ├── model.py             # model construction
-│   ├── evaluate.py         # accuracy metrics + fairness check
-│   └── results.py          # saves each run's report to disk
-├── results/                # created automatically -- one file per run (not tracked in git)
-└── data/
-    ├── compas_two_year_recidivism.csv
-    └── README.md            # problem description + full data dictionary
-```
+- `main.py`: Main pipeline entry point.
+- `config.yaml`: Pipeline configuration.
+- `requirements.txt`: Python dependencies.
+- `src/data.py`: Data loading.
+- `src/preprocessing.py`: Data cleaning and preprocessing.
+- `src/model.py`: Model construction.
+- `src/evaluate.py`: Model evaluation and fairness analysis.
+- `src/tuning.py`: Optuna hyperparameter tuning and nested cross-validation.
+- `src/results.py`: Experiment reports and scoreboard.
+- `data/`: Dataset and data dictionary.
+- `results/`: Generated experiment reports and scoreboard.
 
 ## Pipeline progress
 
-This table is updated after each practical class, so you can always see what changed in the pipeline and why -- it's a running log, not a fixed syllabus.
+| Week | Focus | Main additions |
+|---|---|---|
+| 2 | Baseline pipeline | Data loading, basic preprocessing, logistic regression and fairness check. |
+| 3 | EDA and preprocessing | Missing-value analysis, domain checks, duplicate handling and improved preprocessing. |
+| 4 | Cross-validation | Locked test set, stratified 5-fold CV and out-of-fold evaluation. |
+| 5 | Hyperparameter tuning | Optuna and nested cross-validation. |
+| 6 | Ensembles | Random Forest, Oblique Random Forest, AdaBoost and corrected paired testing. |
+| 7 | Model evaluation | Gradient Boosting, HistGradientBoosting, Naive Bayes, multiple metrics, probabilities and experiment scoreboard. |
 
-| Week | Practical class focus | Added to the pipeline |
-|------|------------------------|------------------------|
-| 2 | Introduction & baseline pipeline | Initial version: project structure, a single naive train/test split (no cross-validation), minimal preprocessing (drop rows with missing values, one-hot encode categoricals), logistic regression baseline, a first (deliberately simple) fairness check comparing our model's and COMPAS's own false-positive rate by race, train-vs-test accuracy reporting (to start spotting overfitting), and each run's full report saved automatically to `results/` |
+## Available models
 
-## Environment setup
+- `dummy`
+- `logistic_regression`
+- `decision_tree`
+- `random_forest`
+- `oblique_random_forest`
+- `adaboost`
+- `gradient_boosting`
+- `hist_gradient_boosting`
+- `naive_bayes`
 
-You only need to do this once per machine.
+The selected model and its parameters are configured in `config.yaml`.
 
-### macOS / Linux
-```bash
-python3 -m venv venv                 # creates an isolated Python environment in a folder called "venv"
-source venv/bin/activate             # activates it -- packages install here, not system-wide, and stay out of your other projects
-pip install -r requirements.txt      # installs the exact packages this project needs, into that environment
-```
+## Model evaluation
 
-### Windows -- PowerShell
+The pipeline uses stratified cross-validation on the development set. The final test set is kept separate and is not used during tuning or cross-validation.
+
+The evaluation metrics include:
+
+- Accuracy
+- Balanced accuracy
+- Precision
+- Recall
+- F1-score
+- F-beta score
+- ROC-AUC
+- Average precision (PR-AUC)
+
+The selection metric is configured through `cv.selection_metric` and is used by Optuna and the experiment scoreboard.
+
+Out-of-fold probabilities are used for the confusion matrix, classification report and fairness analysis.
+
+The fairness analysis compares the model's false positive rate with the COMPAS score across racial groups.
+
+## Hyperparameter tuning
+
+Optuna is used to tune model hyperparameters.
+
+When `tuning.enabled` is true:
+
+1. Nested cross-validation evaluates the tuning procedure.
+2. Each outer fold runs an Optuna study using inner cross-validation.
+3. The selected model is evaluated on the outer validation fold.
+4. A final tuning study is performed on the complete development set.
+5. The final model is fitted on all development rows.
+
+The locked test set is not used in this process.
+
+## Experiment scoreboard
+
+Each run saves:
+
+- `results/runs.csv`: One row per experiment.
+- `results/run_<timestamp>.txt`: Detailed report for each run.
+
+The scoreboard records model settings, preprocessing configuration, tuned parameters, selection metric, mean score, standard deviation, untuned score, dummy baseline and fold scores.
+
+The function `corrected_paired_test()` in `src/evaluate.py` can be used to compare two models statistically.
+
+## Running the project
+
+Activate the virtual environment in PowerShell:
+
 ```powershell
-python -m venv venv                  # creates an isolated Python environment in a folder called "venv"
-venv\Scripts\activate                # activates it -- packages install here, not system-wide, and stay out of your other projects
-pip install -r requirements.txt      # installs the exact packages this project needs, into that environment
-```
-If PowerShell blocks the activation script, run this once first:
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-```
-
-### Windows -- cmd.exe
-Same three steps as above, just with cmd's own activation command:
-```cmd
-python -m venv venv
-venv\Scripts\activate.bat
-pip install -r requirements.txt
-```
-
-Once the environment is active you'll see `(venv)` at the start of your prompt. To leave it later, run `deactivate` (same command on every OS).
-
-### Every time after the first
-
-Creating the environment and installing packages only needs to happen once, ever. Every other time you sit down to work -- a new terminal window, the next practical class, tomorrow -- you don't repeat any of the steps above. From the project's root folder, you just need to:
-
-**macOS / Linux**
-```bash
-source venv/bin/activate
-python main.py
-```
-
-**Windows**
-```powershell
-venv\Scripts\activate
-python main.py
-```
-
-That's it -- activate, then run. If you don't see `(venv)` at the start of your prompt, the environment isn't active and `python main.py` may use the wrong Python (or fail to find a package) entirely.
-
-## Running the pipeline
-
-With the environment active (see above), from the project's root
-folder, on any OS:
-```bash
-python main.py
-```
-
-This loads `config.yaml`, loads and preprocesses the data, trains the model, and prints:
-- **train accuracy and test accuracy, side by side.** Comparing the two is how you catch overfitting: if the model looks much better on the data it was trained on than on data it's never seen, it has memorised rather than learned something that generalises. 
-- a classification report on the test set
-- a false-positive-rate-by-race comparison between our model and
-  COMPAS's own score
-
-All of this is also saved to a timestamped file in `results/` (e.g.`results/run_20260916_143012.txt`), so it doesn't just scroll past in your terminal -- open it later, or change something in `config.yaml` (like the model type) and compare the new file to the last one.
-`results/` is created automatically the first time you run the
-pipeline, and isn't tracked in git (see `.gitignore`) since it's
-generated output, not source.
-
-You're free to improve on this structure or restructure it entirely -- what matters is that your project stays runnable end-to-end with a single command, and that each piece (data, preprocessing, model, evaluation) stays easy to find and change independently.
-
-## Dataset
-
-See `data/README.md`.
-
-
-
-STOP: TOTAL NO. OF ITERATIONS REACHED LIMIT
-
-Increase the number of iterations to improve the convergence (max_iter=1000).
-You might also want to scale the data as shown in:
-    https://scikit-learn.org/stable/modules/preprocessing.html
-Please also refer to the documentation for alternative solver options:
-    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
-  n_iter_i = _check_optimize_result(
-Train accuracy: 0.679
-Test accuracy:  0.677
-Gap (train - test): +0.001
-
-Classification report (test set):
-              precision    recall  f1-score   support
-
-           0       0.69      0.74      0.71       684
-           1       0.66      0.60      0.63       568
-
-    accuracy                           0.68      1252
-   macro avg       0.67      0.67      0.67      1252
-weighted avg       0.68      0.68      0.68      1252
-
-False positive rate by race
-(share of people who did NOT reoffend, but were predicted to)
-
-  Our model:
-     African-American    FPR = 0.50  (n=6)
-     Caucasian           FPR = 0.00  (n=1)
-    -                    FPR = 0.20  (n=5)
-    ?                    FPR = 0.33  (n=3)
-    AFRICAN-AMERICAN     FPR = 0.00  (n=4)
-    African American     FPR = 0.33  (n=3)
-    African-American     FPR = 0.33  (n=303)
-    Asian                FPR = 0.33  (n=3)
-    CAUCASIAN            FPR = 0.25  (n=4)
-    Caucasian            FPR = 0.24  (n=232)
-    Hispanic             FPR = 0.10  (n=61)
-    Native American      FPR = 0.00  (n=2)
-    Other                FPR = 0.15  (n=41)
-    african-american     FPR = 0.10  (n=10)
-    caucasian            FPR = 0.33  (n=3)
-    hispanic             FPR = 0.33  (n=3)
-
-  COMPAS's own score:
-     African-American    FPR = 0.50  (n=6)
-     Caucasian           FPR = 0.00  (n=1)
-    -                    FPR = 0.20  (n=5)
-    ?                    FPR = 0.00  (n=3)
-    AFRICAN-AMERICAN     FPR = 0.25  (n=4)
-    African American     FPR = 0.33  (n=3)
-    African-American     FPR = 0.44  (n=303)
-    Asian                FPR = 0.00  (n=3)
-    CAUCASIAN            FPR = 0.25  (n=4)
-    Caucasian            FPR = 0.25  (n=232)
-    Hispanic             FPR = 0.15  (n=61)
-    Native American      FPR = 0.50  (n=2)
-    Other                FPR = 0.20  (n=41)
-    african-american     FPR = 0.50  (n=10)
-    caucasian            FPR = 0.00  (n=3)
-    hispanic             FPR = 0.33  (n=3)
-
-Full results saved to results\run_20260916_090752.txt
-
-
-| 5 | Hyperparameter tuning without leakage | Added Optuna hyperparameter tuning and nested cross-validation in `src/tuning.py`. The complete preprocessing and model pipeline is used during tuning to avoid data leakage. The test set remains separate from model selection. |
-| 6 | Ensembles: Random Forest, Oblique Random Forest and AdaBoost | Added Oblique Random Forest and AdaBoost to `src/model.py`, alongside the existing models. Added hyperparameter search spaces in `config.yaml` and a corrected paired t-test function for comparing model scores obtained from the same cross-validation folds. |
+venv\Scripts\Activate.ps1

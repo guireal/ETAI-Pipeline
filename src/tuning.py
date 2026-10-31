@@ -1,9 +1,9 @@
 """Optuna hyperparameter tuning and nested cross-validation."""
+
 import numpy as np
 import optuna
 import pandas as pd
 from sklearn.base import clone
-from sklearn.metrics import get_scorer
 from sklearn.model_selection import cross_val_score
 
 
@@ -92,20 +92,17 @@ def nested_cross_validate(
     y,
     outer_cv,
     inner_cv,
-    scoring,
+    scorers,
+    selection_metric,
     search_space,
     n_trials,
     random_state,
     n_jobs=1
 ):
     """Evaluate tuning on outer folds not used for tuning."""
-    scorer = get_scorer(scoring)
     rows = []
 
-    y_oof = np.empty(
-        len(X),
-        dtype=np.asarray(y).dtype
-    )
+    oof_proba = np.empty(len(X), dtype=float)
 
     for fold, (train_idx, val_idx) in enumerate(
         outer_cv.split(X, y),
@@ -121,7 +118,7 @@ def nested_cross_validate(
             X_train,
             y_train,
             inner_cv,
-            scoring,
+            scorers[selection_metric],
             search_space,
             n_trials,
             random_state,
@@ -130,25 +127,35 @@ def nested_cross_validate(
 
         best_pipeline.fit(X_train, y_train)
 
-        train_score = scorer(
+        train_score = scorers[selection_metric](
             best_pipeline, X_train, y_train
         )
-        val_score = scorer(
+
+        val_score = scorers[selection_metric](
             best_pipeline, X_val, y_val
         )
 
-        y_oof[val_idx] = best_pipeline.predict(X_val)
+        oof_proba[val_idx] = best_pipeline.predict_proba(
+            X_val
+        )[:, 1]
 
-        rows.append({
+        row = {
             "fold": fold,
             "train": train_score,
             "validation": val_score,
             "gap": train_score - val_score,
-            "inner_best": study.best_value,
-            **study.best_params
-        })
+            "inner_best": study.best_value
+        }
 
-    return pd.DataFrame(rows), y_oof
+        for name, scorer in scorers.items():
+            row[name] = scorer(
+                best_pipeline, X_val, y_val
+            )
+
+        row.update(study.best_params)
+        rows.append(row)
+
+    return pd.DataFrame(rows), oof_proba
 
 
 def tuning_report(

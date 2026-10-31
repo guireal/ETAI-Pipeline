@@ -2,6 +2,7 @@
 
 import optuna
 import yaml
+from datetime import datetime
 from sklearn.model_selection import StratifiedKFold
 
 from src.data import load_data
@@ -9,11 +10,11 @@ from src.preprocessing import (
     clean_dataset,
     drop_duplicate_rows,
     split_features_target,
-    build_preprocessor,
     split_dev_test
 )
-from src.model import build_model, build_pipeline
+from src.model import build_pipeline
 from src.evaluate import (
+    build_scorers,
     cross_validate_pipeline,
     cv_report,
     oof_classification_report,
@@ -24,7 +25,7 @@ from src.tuning import (
     nested_cross_validate,
     tuning_report
 )
-from src.results import save_run
+from src.results import save_run, save_scores
 
 
 def main():
@@ -47,7 +48,6 @@ def main():
         id_column=id_col
     )
 
-    # Separate features, target and fairness columns.
     mnar_sources = config.get(
         "preprocessing", {}
     ).get("mnar_indicator_sources", [])
@@ -69,14 +69,27 @@ def main():
         )
     )
 
-    preprocessor = build_preprocessor(
-        config.get("preprocessing", {})
+    pipeline = build_pipeline(
+        config["preprocessing"],
+        config["model"]
     )
 
-    model = build_model(config["model"])
-    pipeline = build_pipeline(preprocessor, model)
-
     cv_config = config["cv"]
+
+    metrics = cv_config["metrics"]
+    selection_metric = cv_config.get(
+        "selection_metric", "roc_auc"
+    )
+
+    scorers = build_scorers(metrics)
+
+    if selection_metric not in scorers:
+        raise ValueError(
+            f"Selection metric '{selection_metric}' "
+            f"is not included in the configured metrics."
+        )
+
+    n_jobs = cv_config.get("n_jobs", 1)
     shuffle = cv_config.get("shuffle", True)
 
     cv = StratifiedKFold(
@@ -88,31 +101,68 @@ def main():
         )
     )
 
-    scoring = cv_config.get("scoring", "accuracy")
-    n_jobs = cv_config.get("n_jobs", 1)
+    # Evaluate a dummy classifier as a baseline.
+    floor_pipeline = build_pipeline(
+        config["preprocessing"],
+        {"type": "dummy", "params": {}}
+    )
 
-    # Evaluate the configured model using cross-validation.
-    fold_scores, y_oof = cross_validate_pipeline(
+    floor_scores, _ = cross_validate_pipeline(
+        floor_pipeline,
+        X_dev,
+        y_dev,
+        cv,
+        {selection_metric: scorers[selection_metric]},
+        selection_metric,
+        n_jobs=n_jobs
+    )
+
+    floor = floor_scores["validation"].mean()
+
+    # Evaluate the configured model without tuning.
+    fold_scores, oof_proba = cross_validate_pipeline(
         pipeline,
         X_dev,
         y_dev,
         cv,
-        scoring,
+        scorers,
+        selection_metric,
         n_jobs=n_jobs
     )
+
+    untuned = fold_scores[selection_metric].mean()
 
     report = (
         "Hyperparameters from config.yaml: "
         + str(config["model"].get("params", {}))
     )
-    report += "\n" + cv_report(fold_scores, scoring)
+
+    report += (
+        f"\n\nDummy baseline ({selection_metric}): "
+        f"{floor:.3f}"
+    )
+
+    report += (
+        f"\nUntuned model ({selection_metric}): "
+        f"{untuned:.3f}"
+    )
+
+    report += "\n\n" + cv_report(
+        fold_scores,
+        metrics,
+        selection_metric,
+        "Untuned model cross-validation"
+    )
 
     tuning_config = config.get("tuning", {})
     tuning_enabled = tuning_config.get("enabled", False)
+
     study = None
+    final_scores = fold_scores
 
     if tuning_enabled:
         model_type = config["model"]["type"]
+
         search_spaces = tuning_config.get(
             "search_spaces", {}
         )
@@ -143,21 +193,28 @@ def main():
             f"{inner_cv.get_n_splits()} inner folds."
         )
 
-        nested_scores, y_oof = nested_cross_validate(
+        nested_scores, oof_proba = nested_cross_validate(
             pipeline,
             X_dev,
             y_dev,
             cv,
             inner_cv,
-            scoring,
+            scorers,
+            selection_metric,
             search_space,
             n_trials,
             tuning_seed,
             n_jobs=n_jobs
         )
 
-        report += "\n\nNested cross-validation:\n"
-        report += cv_report(nested_scores, scoring)
+        final_scores = nested_scores
+
+        report += "\n\n" + cv_report(
+            nested_scores,
+            metrics,
+            selection_metric,
+            "Nested cross-validation"
+        )
 
         # Tune the final model using all development data.
         pipeline, study = tune_pipeline(
@@ -165,7 +222,7 @@ def main():
             X_dev,
             y_dev,
             inner_cv,
-            scoring,
+            scorers[selection_metric],
             search_space,
             n_trials,
             tuning_seed,
@@ -175,17 +232,18 @@ def main():
         report += "\n\n" + tuning_report(
             study,
             nested_scores,
-            scoring
+            selection_metric
         )
 
+    # Classification and fairness reports use OOF probabilities.
     report += "\n\n" + oof_classification_report(
         y_dev,
-        y_oof
+        oof_proba
     )
 
     report += "\n" + fairness_report(
         y_dev,
-        y_oof,
+        oof_proba,
         extras_dev,
         sensitive_attr=config["data"]["sensitive_attr"]
     )
@@ -198,7 +256,10 @@ def main():
         f"{len(X_dev)} development rows."
     )
 
+    tuned_params = {}
+
     if study is not None:
+        tuned_params = study.best_params
         refit_message += (
             f" Tuned parameters: {study.best_params}"
         )
@@ -220,13 +281,56 @@ def main():
         "results_dir", "results"
     )
 
+    run = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     saved_path = save_run(
         results_dir,
+        run,
         config,
         report
     )
 
-    print(f"Full results saved to {saved_path}")
+    # Save the experiment to the scoreboard.
+    scoreboard_path = config.get(
+        "output", {}
+    ).get(
+        "scoreboard", "results/runs.csv"
+    )
+
+    row = {
+        "run": run,
+        "data": config["data"]["path"],
+        "model": config["model"]["type"],
+        "tuned": tuning_enabled,
+        "encoder": config["preprocessing"].get("encoder"),
+        "scaler": config["preprocessing"].get("scaler"),
+        "params": str(config["model"].get("params", {})),
+        "tuned_params": str(tuned_params),
+        "metric": selection_metric,
+        "mean": final_scores[selection_metric].mean(),
+        "std": final_scores[selection_metric].std(ddof=1),
+        "untuned": untuned,
+        "floor": floor,
+        "fold_scores": str(
+            final_scores[selection_metric].tolist()
+        )
+    }
+
+    scoreboard = save_scores(scoreboard_path, row)
+
+    comparison = scoreboard[
+        (scoreboard["data"] == config["data"]["path"])
+        & (scoreboard["metric"] == selection_metric)
+    ].sort_values(
+        "mean",
+        ascending=False
+    )
+
+    print("\nExperiment scoreboard:")
+    print(comparison.to_string(index=False))
+
+    print(f"\nFull results saved to {saved_path}")
+    print(f"Scoreboard saved to {scoreboard_path}")
 
 
 if __name__ == "__main__":

@@ -1,21 +1,46 @@
 """Cross-validation, classification and fairness evaluation."""
+
 import numpy as np
 import pandas as pd
 from scipy import stats
-from sklearn.metrics import classification_report
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    fbeta_score,
+    make_scorer,
+    get_scorer
+)
 from sklearn.model_selection import cross_validate
 
 
+def build_scorers(metrics):
+    """Build the scoring functions specified in config.yaml."""
+    scorers = {}
+
+    for name in metrics:
+        if name.startswith("fbeta_"):
+            beta = float(name.split("_")[1])
+            scorers[name] = make_scorer(
+                fbeta_score,
+                beta=beta,
+                zero_division=0
+            )
+        else:
+            scorers[name] = get_scorer(name)
+
+    return scorers
+
+
 def cross_validate_pipeline(
-    pipeline, X, y, cv, scoring="accuracy", n_jobs=1
+    pipeline, X, y, cv, scorers, selection_metric, n_jobs=1
 ):
-    """Evaluate a pipeline and return fold scores and OOF predictions."""
+    """Evaluate a pipeline and return fold scores and OOF probabilities."""
     scores = cross_validate(
         pipeline,
         X,
         y,
         cv=cv,
-        scoring=scoring,
+        scoring=scorers,
         return_train_score=True,
         return_estimator=True,
         return_indices=True,
@@ -23,30 +48,36 @@ def cross_validate_pipeline(
     )
 
     fold_scores = pd.DataFrame({
-        "fold": range(1, len(scores["test_score"]) + 1),
-        "train": scores["train_score"],
-        "validation": scores["test_score"]
+        "fold": range(1, len(scores["estimator"]) + 1),
+        "train": scores[f"train_{selection_metric}"],
+        "validation": scores[f"test_{selection_metric}"]
     })
 
     fold_scores["gap"] = (
         fold_scores["train"] - fold_scores["validation"]
     )
 
-    y_oof = np.empty(len(X), dtype=np.asarray(y).dtype)
+    for name in scorers:
+        fold_scores[name] = scores[f"test_{name}"]
+
+    oof_proba = np.empty(len(X), dtype=float)
 
     for model, val_idx in zip(
         scores["estimator"],
         scores["indices"]["test"]
     ):
-        y_oof[val_idx] = model.predict(X.iloc[val_idx])
+        oof_proba[val_idx] = model.predict_proba(
+            X.iloc[val_idx]
+        )[:, 1]
 
-    return fold_scores, y_oof
+    return fold_scores, oof_proba
 
 
-def cv_report(fold_scores, scoring="accuracy"):
+def cv_report(fold_scores, metrics, selection_metric, title):
     """Display the cross-validation results."""
     lines = [
-        f"Cross-validation ({len(fold_scores)} folds, metric: {scoring})",
+        f"{title} ({len(fold_scores)} folds)",
+        f"Selection metric: {selection_metric}",
         "",
         fold_scores.to_string(
             index=False,
@@ -55,11 +86,10 @@ def cv_report(fold_scores, scoring="accuracy"):
         ""
     ]
 
-    for column in ["train", "validation", "gap"]:
+    for metric in metrics:
         lines.append(
-            f"{column.capitalize()} mean = "
-            f"{fold_scores[column].mean():.3f}; "
-            f"std = {fold_scores[column].std(ddof=1):.3f}"
+            f"{metric}: mean = {fold_scores[metric].mean():.3f}; "
+            f"std = {fold_scores[metric].std(ddof=1):.3f}"
         )
 
     text = "\n".join(lines)
@@ -107,11 +137,16 @@ def corrected_paired_test(scores_a, scores_b, test_train_ratio):
     }
 
 
-def oof_classification_report(y_true, y_pred):
-    """Classification report using out-of-fold predictions."""
+def oof_classification_report(y_true, oof_proba, threshold=0.5):
+    """Classification report using out-of-fold probabilities."""
+    y_pred = (np.asarray(oof_proba) >= threshold).astype(int)
+
+    matrix = confusion_matrix(y_true, y_pred)
+
     text = (
-        "Classification report (out-of-fold predictions, "
-        "development set):\n"
+        "Confusion matrix (out-of-fold predictions):\n"
+        f"{matrix}\n\n"
+        "Classification report (development set):\n"
         + classification_report(
             y_true,
             y_pred,
@@ -124,7 +159,7 @@ def oof_classification_report(y_true, y_pred):
 
 
 def fairness_report(
-    y_true, y_pred, extras, sensitive_attr="race"
+    y_true, oof_proba, extras, sensitive_attr="race", threshold=0.5
 ):
     """Compare false-positive rates by group."""
     df = extras.copy()
@@ -133,7 +168,9 @@ def fairness_report(
         df[sensitive_attr].astype(object).fillna("unknown")
     )
     df["y_true"] = np.asarray(y_true)
-    df["y_pred_model"] = np.asarray(y_pred)
+    df["y_pred_model"] = (
+        np.asarray(oof_proba) >= threshold
+    ).astype(int)
     df["y_pred_compas"] = (
         df["score_text"] != "Low"
     ).astype(int)
