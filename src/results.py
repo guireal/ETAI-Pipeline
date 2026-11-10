@@ -1,62 +1,66 @@
-"""Saving experiment results to disk."""
-
 import os
 import pandas as pd
-from datetime import datetime
 
 
 def save_scores(path, row):
-    """Append one experiment to the results scoreboard."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    runs = (
+        pd.read_csv(path, dtype={"run": str})
+        if os.path.exists(path)
+        else pd.DataFrame()
+    )
 
-    if os.path.exists(path):
-        scores = pd.read_csv(path)
-        scores = pd.concat(
-            [scores, pd.DataFrame([row])],
-            ignore_index=True
-        )
-    else:
-        scores = pd.DataFrame([row])
+    runs = pd.concat(
+        [runs, pd.DataFrame([row])],
+        ignore_index=True
+    )
 
-    scores.to_csv(path, index=False)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    runs.to_csv(path, index=False)
 
-    return scores
+    return runs
 
 
 def save_run(results_dir, run, config, report_text):
-    """Save the configuration summary and report to a text file."""
     os.makedirs(results_dir, exist_ok=True)
 
     path = os.path.join(results_dir, f"run_{run}.txt")
 
+    cv = config["cv"]
     tuning = config.get("tuning", {})
+    selection = config.get("feature_selection") or {}
 
-    if tuning.get("enabled", False):
-        tuning_status = (
-            f"enabled ({tuning.get('n_trials')} trials, "
-            f"{tuning.get('n_splits')} folds)"
+    if tuning.get("enabled"):
+        tuning_line = (
+            f"Optuna, {tuning['n_trials']} trials x "
+            f"{tuning['n_splits']} folds, nested CV"
         )
     else:
-        tuning_status = "disabled"
+        tuning_line = "off"
+
+    if selection.get("enabled"):
+        selection_line = (
+            f"VoteSelector, min_votes={selection.get('min_votes', 2)}"
+        )
+    else:
+        selection_line = "off"
 
     header = (
         f"Run: {run}\n"
         f"Model: {config['model']['type']} "
-        f"params={config['model'].get('params', {})}\n"
-        f"Preprocessing: "
-        f"encoder={config['preprocessing'].get('encoder')} "
-        f"scaler={config['preprocessing'].get('scaler')}\n"
-        f"CV: {config['cv']['n_splits']} folds\n"
-        f"Metrics: {config['cv'].get('metrics', [])}\n"
-        f"Selection metric: "
-        f"{config['cv'].get('selection_metric', 'roc_auc')}\n"
-        f"Tuning: {tuning_status}\n"
-        f"Test size: {config['test_set']['size']} "
-        f"random_state={config['test_set']['random_state']}\n"
+        f"params={config['model'].get('params')}\n"
+        f"Preprocessing: encoder={config['preprocessing']['encoder']} "
+        f"scaler={config['preprocessing']['scaler']}\n"
+        f"CV: {cv['n_splits']} stratified folds\n"
+        f"Metrics: {cv['metrics']}\n"
+        f"Selection metric: {cv['selection_metric']}\n"
+        f"Feature selection: {selection_line}\n"
+        f"Tuning: {tuning_line}\n"
+        f"Locked test set: size={config['test_set']['size']} "
+        f"(not evaluated)\n"
         + "=" * 60 + "\n\n"
     )
 
-    with open(path, "w", encoding="utf-8") as file:
+    with open(path, "w") as file:
         file.write(header + report_text)
 
     return path

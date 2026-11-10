@@ -95,3 +95,23 @@ Activate the virtual environment in PowerShell:
 
 ```powershell
 venv\Scripts\Activate.ps1
+
+## Week 8 - XGBoost and Feature Selection
+
+Week 8 introduces XGBoost and feature selection.
+
+XGBoost is added as a new model using the xgboost Python package. It is now the default model in the pipeline.
+
+Feature selection is implemented through the VoteSelector class. It uses three models to select relevant features:
+
+- Random Forest
+- Gradient Boosting
+- L1 Logistic Regression
+
+Each model votes for the features it considers important. Features with at least the configured number of votes are kept.
+
+Feature selection is included inside the pipeline to avoid data leakage during cross-validation.
+
+The number of required votes can also be tuned with Optuna.
+
+The pipeline now caches preprocessing and feature selection steps during tuning to avoid repeating unnecessary work.
