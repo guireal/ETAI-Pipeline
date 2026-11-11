@@ -1,3 +1,4 @@
+
 """Cleaning, feature splitting and leak-safe preprocessing."""
 import numpy as np
 import pandas as pd
@@ -25,9 +26,7 @@ def flag_invalid_values(df, rules):
         if column not in df.columns:
             continue
 
-        numeric = pd.to_numeric(
-            df[column], errors="coerce"
-        )
+        numeric = pd.to_numeric(df[column], errors="coerce")
 
         lower_ok = (
             numeric >= bounds["min"]
@@ -53,9 +52,7 @@ def flag_invalid_values(df, rules):
     return pd.DataFrame(report_rows)
 
 
-def _canonicalize_categories(
-    df, columns_and_maps, placeholder_tokens
-):
+def _canonicalize_categories(df, columns_and_maps, placeholder_tokens):
     out = df.copy()
 
     for col, mapping in columns_and_maps.items():
@@ -68,9 +65,7 @@ def _canonicalize_categories(
         out[col] = lowered.map(mapping).fillna(cleaned)
 
         out.loc[
-            out[col].astype(str).str.strip().isin(
-                placeholder_tokens
-            ),
+            out[col].astype(str).str.strip().isin(placeholder_tokens),
             col
         ] = np.nan
 
@@ -85,16 +80,20 @@ def clean_dataset(df, diagnostics_config):
         diagnostics_config.get("placeholder_tokens", [])
     )
 
-    for col in diagnostics_config.get(
-        "numeric_text_columns", []
-    ):
+    for col in diagnostics_config.get("numeric_text_columns", []):
         if col in out.columns:
             out[col] = pd.to_numeric(
-                out[col].replace(
-                    list(placeholder_tokens), np.nan
-                ),
+                out[col].replace(list(placeholder_tokens), np.nan),
                 errors="coerce"
             )
+
+    # Convert placeholders in configured categorical columns.
+    for col in diagnostics_config.get("categorical_columns", []):
+        if col in out.columns:
+            missing = (
+                out[col].astype("string").str.strip().isin(placeholder_tokens)
+            )
+            out.loc[missing, col] = np.nan
 
     flag_invalid_values(
         out,
@@ -108,9 +107,7 @@ def clean_dataset(df, diagnostics_config):
     )
 
     columns_to_drop = [
-        c for c in diagnostics_config.get(
-            "redundant_columns", []
-        )
+        c for c in diagnostics_config.get("redundant_columns", [])
         if c in out.columns
     ]
 
@@ -122,9 +119,7 @@ def drop_duplicate_rows(df, id_column=None):
     out = df.drop_duplicates()
 
     if id_column and id_column in out.columns:
-        out = out.drop_duplicates(
-            subset=id_column, keep="first"
-        )
+        out = out.drop_duplicates(subset=id_column, keep="first")
 
     return out
 
@@ -135,38 +130,31 @@ def add_missingness_indicators(df, mnar_indicator_sources):
 
     for col in mnar_indicator_sources:
         if col in out.columns:
-            out[f"{col}_was_missing"] = (
-                out[col].isna().astype(int)
-            )
+            out[f"{col}_was_missing"] = out[col].isna().astype(int)
 
     return out
 
 
-def split_features_target(
-    df, data_config, mnar_indicator_sources
-):
+def split_features_target(df, data_config, mnar_indicator_sources):
     """Separate features, target and columns reserved for fairness auditing."""
     target = data_config["target"]
-    sensitive_attr = data_config["sensitive_attr"]
+    sensitive_attr = data_config.get("sensitive_attr")
     drop_columns = data_config.get("drop_columns", [])
 
-    df = add_missingness_indicators(
-        df, mnar_indicator_sources
-    )
+    df = add_missingness_indicators(df, mnar_indicator_sources)
 
     y = df[target] if target in df.columns else None
 
     extras_cols = [
         c for c in [sensitive_attr, "score_text"]
-        if c in df.columns
+        if c and c in df.columns
     ]
 
-    extras = (
-        df[extras_cols].copy()
-        if extras_cols else None
-    )
+    extras = df[extras_cols].copy() if extras_cols else None
 
-    always_drop = set(drop_columns) | {target, sensitive_attr}
+    always_drop = set(drop_columns) | {target}
+    if sensitive_attr:
+        always_drop.add(sensitive_attr)
 
     feature_cols = [
         c for c in df.columns
@@ -206,21 +194,17 @@ def _make_encoder(encoder_type, seed):
     if encoder_type == "target":
         return TargetEncoder(
             target_type="binary",
-            cv=StratifiedKFold(
-                5, shuffle=True, random_state=seed
-            )
+            cv=StratifiedKFold(5, shuffle=True, random_state=seed)
         )
 
     raise ValueError(f"Unknown encoder: {encoder_type}")
 
 
 def build_preprocessor(preprocessing_config):
-    """Build the preprocessing pipeline from config.yaml."""
+    """Build the preprocessing pipeline from the configuration."""
     imputation = preprocessing_config.get("imputation", {})
 
-    scaler_factory = _SCALERS[
-        preprocessing_config["scaler"]
-    ]
+    scaler_factory = _SCALERS[preprocessing_config["scaler"]]
     scaler = (
         scaler_factory()
         if callable(scaler_factory)
@@ -236,9 +220,7 @@ def build_preprocessor(preprocessing_config):
         (
             "impute",
             SimpleImputer(
-                strategy=imputation.get(
-                    "numeric_strategy", "median"
-                )
+                strategy=imputation.get("numeric_strategy", "median")
             )
         ),
         ("scale", scaler),
@@ -249,8 +231,7 @@ def build_preprocessor(preprocessing_config):
             "impute",
             SimpleImputer(
                 strategy=imputation.get(
-                    "categorical_strategy",
-                    "most_frequent"
+                    "categorical_strategy", "most_frequent"
                 )
             )
         ),
@@ -259,9 +240,7 @@ def build_preprocessor(preprocessing_config):
 
     indicator_cols = [
         f"{c}_was_missing"
-        for c in preprocessing_config.get(
-            "mnar_indicator_sources", []
-        )
+        for c in preprocessing_config.get("mnar_indicator_sources", [])
     ]
 
     return ColumnTransformer([

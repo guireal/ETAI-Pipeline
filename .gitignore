@@ -4,4 +4,10 @@ __pycache__/
 .DS_Store
 .ipynb_checkpoints/
 *.egg-info/
+
+# COMPAS experiment results
 results/
+
+# Adult experiment reports and scoreboard
+results_adult/runs.csv
+results_adult/run_*.txt

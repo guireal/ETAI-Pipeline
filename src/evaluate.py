@@ -1,8 +1,10 @@
+
 """Cross-validation, classification and fairness evaluation."""
 
 import numpy as np
 import pandas as pd
 from scipy import stats
+
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
@@ -14,7 +16,7 @@ from sklearn.model_selection import cross_validate
 
 
 def build_scorers(metrics):
-    """Build the scoring functions specified in config.yaml."""
+    """Build the scoring functions specified in the configuration."""
     scorers = {}
 
     for name in metrics:
@@ -139,7 +141,9 @@ def corrected_paired_test(scores_a, scores_b, test_train_ratio):
 
 def oof_classification_report(y_true, oof_proba, threshold=0.5):
     """Classification report using out-of-fold probabilities."""
-    y_pred = (np.asarray(oof_proba) >= threshold).astype(int)
+    y_pred = (
+        np.asarray(oof_proba) >= threshold
+    ).astype(int)
 
     matrix = confusion_matrix(y_true, y_pred)
 
@@ -159,21 +163,40 @@ def oof_classification_report(y_true, oof_proba, threshold=0.5):
 
 
 def fairness_report(
-    y_true, oof_proba, extras, sensitive_attr="race", threshold=0.5
+    y_true,
+    oof_proba,
+    extras,
+    sensitive_attr=None,
+    threshold=0.5
 ):
-    """Compare false-positive rates by group."""
+    """Calculate false-positive rates for groups in the sensitive attribute."""
+    if extras is None or sensitive_attr is None:
+        return "Fairness report unavailable: no sensitive attribute configured."
+
+    if sensitive_attr not in extras.columns:
+        return (
+            f"Fairness report unavailable: "
+            f"'{sensitive_attr}' was not found."
+        )
+
     df = extras.copy()
 
     df[sensitive_attr] = (
         df[sensitive_attr].astype(object).fillna("unknown")
     )
+
     df["y_true"] = np.asarray(y_true)
     df["y_pred_model"] = (
         np.asarray(oof_proba) >= threshold
     ).astype(int)
-    df["y_pred_compas"] = (
-        df["score_text"] != "Low"
-    ).astype(int)
+
+    # COMPAS has its own risk category for a direct comparison.
+    has_compas_score = "score_text" in df.columns
+
+    if has_compas_score:
+        df["y_pred_compas"] = (
+            df["score_text"].astype(str).str.strip().str.lower() != "low"
+        ).astype(int)
 
     lines = [
         f"False positive rate by {sensitive_attr}",
@@ -181,10 +204,12 @@ def fairness_report(
         ""
     ]
 
-    for label, column in [
-        ("Our model", "y_pred_model"),
-        ("COMPAS score", "y_pred_compas")
-    ]:
+    columns = [("Our model", "y_pred_model")]
+
+    if has_compas_score:
+        columns.append(("COMPAS score", "y_pred_compas"))
+
+    for label, column in columns:
         lines.append(f"  {label}:")
 
         for group, group_df in df.groupby(
