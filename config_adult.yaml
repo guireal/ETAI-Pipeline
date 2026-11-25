@@ -123,6 +123,11 @@ tuning:
       model__reg_alpha: {type: float, low: 0.001, high: 10.0, log: true}
       model__gamma: {type: float, low: 0.0, high: 5.0}
 
+anomaly:
+  method: "none"  # none | isolation_forest | lof
+  n_neighbors: 20
+  random_state: 42
+
 output:
   results_dir: "results_adult"
   model_path: "models/model_adult.joblib"

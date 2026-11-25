@@ -17,7 +17,7 @@ from sklearn.random_projection import SparseRandomProjection
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
-from src.preprocessing import build_preprocessor
+from src.preprocessing import AnomalyScore, build_preprocessor
 
 
 def adaboost(max_depth=1, **params):
@@ -112,7 +112,6 @@ class VoteSelector(SelectorMixin, BaseEstimator):
 
         self.support_ = self.votes_ >= self.min_votes
 
-        # Keep the feature with the most votes if none reaches the threshold.
         if not np.any(self.support_):
             self.support_[np.argmax(self.votes_)] = True
 
@@ -126,11 +125,22 @@ def build_pipeline(
     preprocessing_config,
     model_config,
     selection_config=None,
-    memory=None
+    memory=None,
+    anomaly_config=None
 ):
     steps = [
         ("prep", build_preprocessor(preprocessing_config))
     ]
+
+    if anomaly_config and anomaly_config.get("method", "none") != "none":
+        steps.append((
+            "anomaly",
+            AnomalyScore(
+                method=anomaly_config["method"],
+                n_neighbors=anomaly_config.get("n_neighbors", 20),
+                random_state=anomaly_config.get("random_state")
+            )
+        ))
 
     if selection_config and selection_config.get("enabled", False):
         steps.append((

@@ -43,6 +43,9 @@ def main(config_path="config.yaml"):
         "imputation", {}
     ).get("numeric_strategy", "median")
 
+    anomaly_config = config.get("anomaly") or {}
+    anomaly_method = anomaly_config.get("method", "none")
+
     print(f"Configuration: {config_path}")
 
     df_raw = load_data(config["data"]["path"])
@@ -97,6 +100,7 @@ def main(config_path="config.yaml"):
     print(f"Selection metric: {selection_metric}")
     print(f"Feature selection: {selection_enabled}")
     print(f"Numeric imputer: {imputer_strategy}")
+    print(f"Anomaly score: {anomaly_method}")
     print(f"Development rows: {len(X_dev)}")
     print(f"Locked test rows: {len(X_test)}")
 
@@ -107,7 +111,8 @@ def main(config_path="config.yaml"):
             config["preprocessing"],
             config["model"],
             selection_config,
-            memory=cache_dir
+            memory=cache_dir,
+            anomaly_config=anomaly_config
         )
 
         floor_pipeline = build_pipeline(
@@ -144,7 +149,8 @@ def main(config_path="config.yaml"):
         report = (
             f"Configuration: {config_path}\n"
             f"Hyperparameters: {config['model'].get('params')}\n"
-            f"Numeric imputer: {imputer_strategy}\n\n"
+            f"Numeric imputer: {imputer_strategy}\n"
+            f"Anomaly score: {anomaly_method}\n\n"
             + cv_report(
                 fold_scores,
                 metrics,
@@ -261,6 +267,11 @@ def main(config_path="config.yaml"):
         if selection_enabled:
             all_features = pipeline.named_steps["prep"].get_feature_names_out()
 
+            if "anomaly" in pipeline.named_steps:
+                all_features = pipeline.named_steps["anomaly"].get_feature_names_out(
+                    all_features
+                )
+
             kept = pipeline.named_steps["select"].get_feature_names_out(
                 all_features
             ).tolist()
@@ -357,6 +368,7 @@ def main(config_path="config.yaml"):
             "encoder": config["preprocessing"]["encoder"],
             "scaler": config["preprocessing"]["scaler"],
             "imputer": imputer_strategy,
+            "anomaly": anomaly_method,
             "feature_selection": (
                 f"min_votes {pipeline.named_steps['select'].min_votes}"
                 if selection_enabled else "off"
@@ -390,8 +402,8 @@ def main(config_path="config.yaml"):
 
         board = (
             same.sort_values("mean", ascending=False)
-            [["run", "model", "tuned", "imputer", "feature_selection",
-              "mean", "std", "untuned", "floor"]]
+            [["run", "model", "tuned", "imputer", "anomaly",
+              "feature_selection", "mean", "std", "untuned", "floor"]]
             .rename(columns={"mean": selection_metric})
             .to_string(
                 index=False,

@@ -317,3 +317,91 @@ The following tests were performed:
 - Prediction IDs, probabilities and binary labels were validated.
 
 The small training samples used for the integration tests were only intended to verify the workflow. Their evaluation metrics are not reported as final model performance.
+
+## Week 11 — Outliers and Anomaly Detection
+
+### Objective
+
+Anomaly detection identifies observations that are unusual compared with the other observations in the dataset.
+
+Invalid values detected through domain rules are converted into missing values during cleaning. Anomalies are different: an observation can contain individually valid values but still represent an unusual combination of features.
+
+Anomalous observations are real observations and should not be automatically deleted. Instead, the pipeline adds an `anomaly_score` feature to represent how unusual each observation is. Higher scores indicate more unusual observations.
+
+### Available methods
+
+The anomaly detection method is selected through the `anomaly.method` setting in the YAML configuration file.
+
+| Method | Description | Typical score interpretation |
+|---|---|---|
+| `none` | Disables anomaly scoring. This is the default. | No anomaly score is added. |
+| `isolation_forest` | Uses Isolation Forest to identify observations that are easier to isolate from the rest of the data. | Around 0.5 for ordinary observations and closer to 1 for anomalies. |
+| `lof` | Uses Local Outlier Factor to compare an observation's local density with the density of its neighbours. | Around 1 for ordinary observations; substantially higher values indicate more unusual observations. |
+
+Isolation Forest is generally fast and does not rely on distance calculations.
+
+Local Outlier Factor (LOF) is distance-based and operates after preprocessing and scaling. Its `n_neighbors` parameter controls how many neighbouring observations are considered. This value should be larger than the largest group of identical rows to avoid unstable scores.
+
+### Configuration
+
+Anomaly detection is configured independently for COMPAS and Adult.
+
+Example:
+
+```yaml
+anomaly:
+  method: "none"  # none | isolation_forest | lof
+  n_neighbors: 20
+  random_state: 42
+```
+
+To enable Isolation Forest, set `method` to `isolation_forest`. To enable Local Outlier Factor, set it to `lof`.
+
+The default method is `none`, so existing configurations retain their previous behaviour unless anomaly scoring is explicitly enabled.
+
+The `contamination` parameter is not used because the pipeline adds a continuous anomaly score instead of applying a binary threshold to classify observations as normal or anomalous.
+
+### Pipeline integration
+
+The anomaly detector is added as a pipeline step after preprocessing and before feature selection:
+
+```text
+Preprocessing → Anomaly Score → Feature Selection → Model
+```
+
+The detector is fitted only on the training rows of each cross-validation fold. It does not use the target variable. Validation and test observations are scored using the detector fitted on the corresponding training rows.
+
+This prevents information from validation or test observations from being used when fitting the anomaly detector.
+
+### Prediction and deployment
+
+The anomaly detector is part of the fitted pipeline. When a saved pipeline is loaded for prediction, it applies the fitted detector to new observations and generates their anomaly scores automatically.
+
+Therefore, the standalone `predict.py` script does not need to be modified.
+
+### Reporting
+
+The selected anomaly method is recorded in the console output, experiment report and experiment scoreboard. The Local Outlier Factor neighbour setting is also included in the report when that method is selected.
+
+### Week 11 integration testing
+
+The anomaly detection integration was tested on both COMPAS and Adult using a 350-row sample from each dataset.
+
+| Dataset | Method | Result |
+|---|---|---|
+| COMPAS | Isolation Forest | Passed |
+| COMPAS | Local Outlier Factor | Passed |
+| Adult | Isolation Forest | Passed |
+| Adult | Local Outlier Factor | Passed |
+
+The tests verified that:
+
+- The pipeline follows the correct order: preprocessing, anomaly scoring, feature selection and model.
+- The `anomaly_score` feature is added.
+- Both anomaly detection methods can be fitted.
+- Predictions can be generated for validation observations.
+- Predicted probabilities are finite and within the valid range from 0 to 1.
+
+Each test used 280 training observations and generated 70 test predictions. All four integration tests passed.
+
+These tests verify pipeline integration and functionality; they are not a comparison of final predictive performance between anomaly detection methods.

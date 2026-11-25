@@ -42,6 +42,7 @@ def save_run(results_dir, run, config, report_text):
     tuning = config.get("tuning", {})
     selection = config.get("feature_selection") or {}
     imputation = config["preprocessing"].get("imputation", {})
+    anomaly = config.get("anomaly") or {}
 
     if tuning.get("enabled"):
         tuning_line = (
@@ -72,6 +73,8 @@ def save_run(results_dir, run, config, report_text):
         f"n_neighbors={imputation.get('n_neighbors', 5)}, "
         f"max_iter={imputation.get('max_iter', 10)}, "
         f"n_estimators={imputation.get('n_estimators', 50)}\n"
+        f"Anomaly score: {anomaly.get('method', 'none')}\n"
+        f"Anomaly n_neighbors: {anomaly.get('n_neighbors', 20)}\n"
         f"CV: {cv['n_splits']} stratified folds\n"
         f"Metrics: {cv['metrics']}\n"
         f"Selection metric: {cv['selection_metric']}\n"
