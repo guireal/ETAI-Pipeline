@@ -1,15 +1,15 @@
-
 # ETAI Predictive Pipeline
 
 This project develops a machine learning pipeline for classification problems. It started with the COMPAS two-year recidivism dataset and was extended to work with the Adult income dataset.
 
-The pipeline includes data loading, cleaning, preprocessing, feature selection, model construction, cross-validation, hyperparameter tuning, evaluation and fairness analysis.
+The pipeline includes data loading, cleaning, preprocessing, feature selection, model construction, cross-validation, hyperparameter tuning, evaluation, fairness analysis and prediction of new observations.
 
 ## Project structure
 
 ```text
 .
 ├── main.py
+├── predict.py
 ├── config.yaml
 ├── config_adult.yaml
 ├── requirements.txt
@@ -22,13 +22,18 @@ The pipeline includes data loading, cleaning, preprocessing, feature selection, 
 │   └── results.py
 ├── data/
 │   ├── compas_two_year_recidivism.csv
+│   ├── compas_new_people.csv
 │   ├── adult_train.csv
 │   ├── adult_new.csv
+│   ├── README.md
 │   └── ADULT_README.md
+├── models/
 ├── results/
 └── results_adult/
     └── adult_predictions.csv
 ```
+
+The `models/` directory is generated locally and is not tracked by Git.
 
 ## Pipeline progress
 
@@ -42,6 +47,7 @@ The pipeline includes data loading, cleaning, preprocessing, feature selection, 
 | 7 | Model evaluation | Gradient Boosting, HistGradientBoosting, Naive Bayes, multiple metrics, probabilities and experiment scoreboard. |
 | 8 | XGBoost and feature selection | XGBoost, VoteSelector and joint tuning of model parameters and the feature-selection threshold. |
 | 9 | Beyond COMPAS | Configuration-based execution, generalised cleaning and fairness evaluation, Adult income predictions for new observations. |
+| 10 | Missing values and deployment | Five numerical imputation strategies, scaling before imputation, saving fitted models and standalone prediction of new observations. |
 
 ## Available models
 
@@ -229,3 +235,85 @@ The original IDs and row count were verified. All probabilities were valid and p
 ### Reflection
 
 The hardest assumptions to identify were the ones tied directly to COMPAS, especially the cleaning of placeholder values and the fairness report's dependence on `score_text`. Making these steps configurable allowed the same pipeline to work with Adult without changing the original COMPAS configuration. XGBoost, sensible preprocessing and feature selection allowed the Adult model to reach all three target scores. The untuned model performed slightly better, but the tuned model also met every target.
+
+## Week 10 — Missing Values and Deployment
+
+### Numerical imputation
+
+The numerical preprocessing pipeline supports five imputation strategies:
+
+| Strategy | Description |
+|---|---|
+| `median` | Replaces missing values with the training-set median. |
+| `mean` | Replaces missing values with the training-set mean. |
+| `knn` | Uses the nearest observations to estimate missing values. |
+| `iterative` | Uses other numerical features to estimate missing values through iterative imputation. |
+| `random_forest` | Uses an iterative imputer with a Random Forest estimator. |
+
+The strategy is selected through `preprocessing.imputation.numeric_strategy` in the configuration file.
+
+Numerical features are scaled before imputation. This is particularly important for KNN because distance calculations should not be dominated by features with larger numerical scales.
+
+The imputation parameters can also be configured:
+
+- `n_neighbors`: number of neighbours used by KNN.
+- `max_iter`: maximum number of iterations for iterative imputation.
+- `n_estimators`: number of trees used by the Random Forest imputer.
+
+Categorical features continue to use the configured categorical imputation strategy.
+
+All imputers are fitted inside the preprocessing pipeline, using only the training data of each cross-validation fold. The same fitted preprocessing steps are then used for new observations.
+
+### Saving the fitted model
+
+After training, the final fitted pipeline is saved with Joblib.
+
+The pipeline includes preprocessing, feature selection when enabled, and the trained model.
+
+The model paths are configured separately:
+
+- COMPAS: `models/model.joblib`
+- Adult: `models/model_adult.joblib`
+
+The `models/` directory is excluded from Git because fitted model files are generated locally.
+
+### Predicting new observations
+
+The `predict.py` script loads a previously saved model and generates predictions without retraining.
+
+For COMPAS:
+
+```powershell
+python predict.py data/compas_new_people.csv predictions.csv
+```
+
+For Adult:
+
+```powershell
+python predict.py data/adult_new.csv results_adult/predictions.csv config_adult.yaml
+```
+
+The prediction script accepts an input CSV, an optional output path and an optional configuration file.
+
+Every input observation receives one prediction. The output contains:
+
+- `id`: original observation identifier.
+- `probability`: predicted probability of the positive class.
+- `prediction`: binary prediction using a threshold of 0.5.
+
+New observations are cleaned using the same configured rules as the training data. Duplicate rows are not removed, so every input observation is preserved.
+
+### Week 10 testing
+
+The following tests were performed:
+
+- All five numerical imputation strategies were tested on COMPAS and Adult data.
+- Scaling before imputation was verified.
+- Missing and invalid transformed values were checked.
+- Both COMPAS and Adult training workflows successfully saved fitted models.
+- The saved models were loaded independently through `predict.py`.
+- COMPAS standalone prediction generated 40 predictions for 40 input observations.
+- Adult standalone prediction generated 2,000 predictions for 2,000 input observations.
+- Prediction IDs, probabilities and binary labels were validated.
+
+The small training samples used for the integration tests were only intended to verify the workflow. Their evaluation metrics are not reported as final model performance.

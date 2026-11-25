@@ -1,10 +1,10 @@
-
 import os
 import sys
 import shutil
 import tempfile
 from datetime import datetime
 
+import joblib
 import optuna
 import pandas as pd
 import yaml
@@ -39,6 +39,10 @@ def main(config_path="config.yaml"):
     run = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_type = config["model"]["type"]
 
+    imputer_strategy = config["preprocessing"].get(
+        "imputation", {}
+    ).get("numeric_strategy", "median")
+
     print(f"Configuration: {config_path}")
 
     df_raw = load_data(config["data"]["path"])
@@ -60,7 +64,9 @@ def main(config_path="config.yaml"):
     )
 
     if y is None:
-        raise ValueError("The target column was not found in the training data.")
+        raise ValueError(
+            "The target column was not found in the training data."
+        )
 
     X_dev, X_test, y_dev, y_test, extras_dev, extras_test = split_dev_test(
         X,
@@ -90,6 +96,7 @@ def main(config_path="config.yaml"):
     print(f"Model: {model_type}")
     print(f"Selection metric: {selection_metric}")
     print(f"Feature selection: {selection_enabled}")
+    print(f"Numeric imputer: {imputer_strategy}")
     print(f"Development rows: {len(X_dev)}")
     print(f"Locked test rows: {len(X_test)}")
 
@@ -136,7 +143,8 @@ def main(config_path="config.yaml"):
 
         report = (
             f"Configuration: {config_path}\n"
-            f"Hyperparameters: {config['model'].get('params')}\n\n"
+            f"Hyperparameters: {config['model'].get('params')}\n"
+            f"Numeric imputer: {imputer_strategy}\n\n"
             + cv_report(
                 fold_scores,
                 metrics,
@@ -252,6 +260,7 @@ def main(config_path="config.yaml"):
 
         if selection_enabled:
             all_features = pipeline.named_steps["prep"].get_feature_names_out()
+
             kept = pipeline.named_steps["select"].get_feature_names_out(
                 all_features
             ).tolist()
@@ -262,6 +271,27 @@ def main(config_path="config.yaml"):
             )
 
         report += "\n" + refit + "\n"
+
+        # Save the final fitted pipeline for future predictions.
+        model_path = config.get("output", {}).get(
+            "model_path",
+            "models/model.joblib"
+        )
+
+        os.makedirs(
+            os.path.dirname(model_path) or ".",
+            exist_ok=True
+        )
+
+        # Remove the temporary cache reference before saving the model.
+        pipeline.set_params(memory=None)
+
+        joblib.dump(pipeline, model_path)
+
+        model_message = f"Fitted model saved to: {model_path}"
+
+        print(f"\n{model_message}")
+        report += "\n" + model_message + "\n"
 
         # Predict a separate new dataset when one is configured.
         new_data_path = config["data"].get("new_data_path")
@@ -326,6 +356,7 @@ def main(config_path="config.yaml"):
             "tuned": tuning_enabled,
             "encoder": config["preprocessing"]["encoder"],
             "scaler": config["preprocessing"]["scaler"],
+            "imputer": imputer_strategy,
             "feature_selection": (
                 f"min_votes {pipeline.named_steps['select'].min_votes}"
                 if selection_enabled else "off"
@@ -359,7 +390,7 @@ def main(config_path="config.yaml"):
 
         board = (
             same.sort_values("mean", ascending=False)
-            [["run", "model", "tuned", "feature_selection",
+            [["run", "model", "tuned", "imputer", "feature_selection",
               "mean", "std", "untuned", "floor"]]
             .rename(columns={"mean": selection_metric})
             .to_string(
@@ -391,4 +422,5 @@ if __name__ == "__main__":
     selected_config = (
         sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
     )
+
     main(selected_config)

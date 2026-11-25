@@ -1,11 +1,14 @@
-
 """Cleaning, feature splitting and leak-safe preprocessing."""
+
 import numpy as np
 import pandas as pd
 
 from category_encoders import CountEncoder
+
 from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (
@@ -33,6 +36,7 @@ def flag_invalid_values(df, rules):
             if "min" in bounds
             else pd.Series(True, index=numeric.index)
         )
+
         upper_ok = (
             numeric <= bounds["max"]
             if "max" in bounds
@@ -87,7 +91,6 @@ def clean_dataset(df, diagnostics_config):
                 errors="coerce"
             )
 
-    # Convert placeholders in configured categorical columns.
     for col in diagnostics_config.get("categorical_columns", []):
         if col in out.columns:
             missing = (
@@ -153,6 +156,7 @@ def split_features_target(df, data_config, mnar_indicator_sources):
     extras = df[extras_cols].copy() if extras_cols else None
 
     always_drop = set(drop_columns) | {target}
+
     if sensitive_attr:
         always_drop.add(sensitive_attr)
 
@@ -169,6 +173,37 @@ _SCALERS = {
     "standard": StandardScaler,
     "minmax": MinMaxScaler,
     "robust": RobustScaler,
+}
+
+
+_NUMERIC_IMPUTERS = {
+    "median": lambda cfg, seed: SimpleImputer(
+        strategy="median"
+    ),
+
+    "mean": lambda cfg, seed: SimpleImputer(
+        strategy="mean"
+    ),
+
+    "knn": lambda cfg, seed: KNNImputer(
+        n_neighbors=cfg.get("n_neighbors", 5)
+    ),
+
+    "iterative": lambda cfg, seed: IterativeImputer(
+        max_iter=cfg.get("max_iter", 10),
+        random_state=seed
+    ),
+
+    "random_forest": lambda cfg, seed: IterativeImputer(
+        estimator=RandomForestRegressor(
+            n_estimators=cfg.get("n_estimators", 50),
+            min_samples_leaf=5,
+            random_state=seed,
+            n_jobs=-1
+        ),
+        max_iter=cfg.get("max_iter", 10),
+        random_state=seed
+    ),
 }
 
 
@@ -205,6 +240,7 @@ def build_preprocessor(preprocessing_config):
     imputation = preprocessing_config.get("imputation", {})
 
     scaler_factory = _SCALERS[preprocessing_config["scaler"]]
+
     scaler = (
         scaler_factory()
         if callable(scaler_factory)
@@ -216,14 +252,24 @@ def build_preprocessor(preprocessing_config):
         preprocessing_config.get("random_state")
     )
 
+    numeric_strategy = imputation.get(
+        "numeric_strategy", "median"
+    )
+
+    if numeric_strategy not in _NUMERIC_IMPUTERS:
+        raise ValueError(
+            f"Unknown numeric_strategy: {numeric_strategy}. "
+            f"Options: {list(_NUMERIC_IMPUTERS)}"
+        )
+
+    numeric_imputer = _NUMERIC_IMPUTERS[numeric_strategy](
+        imputation,
+        preprocessing_config.get("random_state")
+    )
+
     numeric_pipeline = Pipeline([
-        (
-            "impute",
-            SimpleImputer(
-                strategy=imputation.get("numeric_strategy", "median")
-            )
-        ),
         ("scale", scaler),
+        ("impute", numeric_imputer),
     ])
 
     categorical_pipeline = Pipeline([

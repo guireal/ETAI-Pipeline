@@ -1,8 +1,12 @@
+"""Saving experiment results and reports."""
+
 import os
 import pandas as pd
 
 
 def save_scores(path, row):
+    """Append one experiment to the scoreboard."""
+
     runs = (
         pd.read_csv(path, dtype={"run": str})
         if os.path.exists(path)
@@ -14,20 +18,30 @@ def save_scores(path, row):
         ignore_index=True
     )
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    os.makedirs(
+        os.path.dirname(path) or ".",
+        exist_ok=True
+    )
+
     runs.to_csv(path, index=False)
 
     return runs
 
 
 def save_run(results_dir, run, config, report_text):
+    """Save the full report for an experiment."""
+
     os.makedirs(results_dir, exist_ok=True)
 
-    path = os.path.join(results_dir, f"run_{run}.txt")
+    path = os.path.join(
+        results_dir,
+        f"run_{run}.txt"
+    )
 
     cv = config["cv"]
     tuning = config.get("tuning", {})
     selection = config.get("feature_selection") or {}
+    imputation = config["preprocessing"].get("imputation", {})
 
     if tuning.get("enabled"):
         tuning_line = (
@@ -50,6 +64,14 @@ def save_run(results_dir, run, config, report_text):
         f"params={config['model'].get('params')}\n"
         f"Preprocessing: encoder={config['preprocessing']['encoder']} "
         f"scaler={config['preprocessing']['scaler']}\n"
+        f"Numeric imputer: "
+        f"{imputation.get('numeric_strategy', 'median')}\n"
+        f"Categorical imputer: "
+        f"{imputation.get('categorical_strategy', 'most_frequent')}\n"
+        f"Imputer parameters: "
+        f"n_neighbors={imputation.get('n_neighbors', 5)}, "
+        f"max_iter={imputation.get('max_iter', 10)}, "
+        f"n_estimators={imputation.get('n_estimators', 50)}\n"
         f"CV: {cv['n_splits']} stratified folds\n"
         f"Metrics: {cv['metrics']}\n"
         f"Selection metric: {cv['selection_metric']}\n"
@@ -60,7 +82,7 @@ def save_run(results_dir, run, config, report_text):
         + "=" * 60 + "\n\n"
     )
 
-    with open(path, "w") as file:
+    with open(path, "w", encoding="utf-8") as file:
         file.write(header + report_text)
 
     return path
